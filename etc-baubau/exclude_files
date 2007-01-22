@@ -1,0 +1,6 @@
+# regexp for files (or directories) that should always be excluded
+#
+.*\.(avi|mpg|mov|mp3|mp4|ogg|img|iso|x-msvideo|wmv|wma|nuv|wav)$
+^/usr/src/
+^/home/shnavid/(redhat|downloads|vmware)/
+^/home/shnavid/docs/(pics|videos|music)/
