@@ -556,10 +556,12 @@ for ext in dict_sort_by_value(STATS["size_by_ext"]):
 	slog.info(" * %s: %d Mb" % (ext, STATS["size_by_ext"][ext] / 1024 / 1024))
 	if inc>5: break
 	inc+=1
+del(STATS["size_by_ext"])
 
 slog.info("largest files included:")
 STATS["size_by_fname"].reverse()
 for fname, size in STATS["size_by_fname"]:
 	slog.info(" * %s: %d Mb" % (fname, size / 1024 / 1024)) 
+del(STATS["size_by_fname"])
 
 sys.exit(0)
