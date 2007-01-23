@@ -14,7 +14,6 @@ import tarfile
 import commands
 import getopt
 from string import lower
-from operator import itemgetter
 
 ts = rpm.TransactionSet()
 
@@ -108,6 +107,13 @@ def get_md5(fname):
 	f.close()
 	m.update(data)
 	return m.hexdigest()
+
+def dict_sort_by_value(d):
+	""" Returns the keys of dictionary d sorted by their values """
+	items=d.items()
+	backitems=[ [v[1],v[0]] for v in items]
+	backitems.sort()
+	return [ backitems[i][1] for i in range(0,len(backitems))]
 
 def isModified(fileName, fileMD5, fileSize=-1):
 
@@ -213,9 +219,9 @@ def archive_thread():
 			try:
 				del pkg_files_data[item]
 			except KeyError:
-				ext = item.rsplit("/")[-1]
+				ext = item.split("/")[-1]
 				if ext.find(".") > 0:
-					ext =  lower(ext.rsplit(".")[-1])
+					ext =  lower(ext.split(".")[-1])
 					if STATS["size_by_ext"].has_key(ext):
 						STATS["size_by_ext"][ext]+=get_file_size(item)
 					else:
@@ -314,7 +320,7 @@ def rpmqf_thread():
 
 slog = logging.getLogger('pypa')
 hdlr = logging.StreamHandler(sys.stdout)
-hdlr.setFormatter( logging.Formatter('%(asctime)s %(levelname)s %(message)s') )
+hdlr.setFormatter( logging.Formatter('%(levelname)s: %(message)s') )
 slog.addHandler(hdlr)
 
 slog.setLevel(logging.INFO)
@@ -373,29 +379,34 @@ if not OPTIONS["backup_info_dir"]:
 
 if OPTIONS["log_file"]:
 	hdlr = logging.FileHandler(OPTIONS["log_file"])
-	hdlr.setFormatter( logging.Formatter('%(asctime)s %(levelname)s %(message)s') )
+	hdlr.setFormatter( logging.Formatter('%(asctime)s %(levelname)s: %(message)s') )
 	slog.addHandler(hdlr)
 
 #
 # Prepare
 #
 
-slog.info("starting")
+slog.debug("starting")
 
 fs_to_backup = [ OPTIONS["root_dir"] ]
 
 slog.debug("checking what file-systems to consider")
-fp=open("%s/etc/fstab" % OPTIONS["root_dir"],"r")
-for line in fp.readlines():
-	fs=line.split()
-	try:
-	   if fs[2] == "ext3" and not "noauto" in fs[3].split(","):
-		if not fs[1] in fs_to_backup:	# should only add file-systems which are mounted inside an fs which is already in fs_to_backup
-			fs_to_backup.append(fs[1])
-			slog.debug(" - considering %s" % fs[1])
-	except IndexError:
-	   pass
-fp.close()
+try:
+	fp=open("%s/etc/fstab" % OPTIONS["root_dir"],"r")
+except:
+	slog.error("no /etc/fstab found. is this a root file-system ?")
+	sys.exit(1)
+else:
+	for line in fp.readlines():
+		fs=line.split()
+		try:
+		   if fs[2] == "ext3" and not "noauto" in fs[3].split(","):
+			if not fs[1] in fs_to_backup:	# should only add file-systems which are mounted inside an fs which is already in fs_to_backup
+				fs_to_backup.append(fs[1])
+				slog.debug(" - considering %s" % fs[1])
+		except IndexError:
+		   pass
+	fp.close()
 
 #
 # Here we build a list of files which are going to be forcefully included
@@ -541,14 +552,13 @@ slog.info("finished.")
 
 slog.info("extensions by size for included files:")
 inc=0
-for ext,fize in reversed(sorted(STATS["size_by_ext"].items(), key=itemgetter(1))):
-	slog.info(" * %s: %d Mb" % (ext, fize / 1024 / 1024))
-	if inc>5:	break
+for ext in dict_sort_by_value(STATS["size_by_ext"]):
+	slog.info(" * %s: %d Mb" % (ext, STATS["size_by_ext"][ext] / 1024 / 1024))
+	if inc>5: break
 	inc+=1
 
-slog.info("biggest included files:")
+slog.info("largest files included:")
 STATS["size_by_fname"].reverse()
-print STATS["size_by_fname"]
 for fname, size in STATS["size_by_fname"]:
 	slog.info(" * %s: %d Mb" % (fname, size / 1024 / 1024)) 
 
