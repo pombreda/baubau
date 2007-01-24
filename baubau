@@ -598,13 +598,11 @@ slog.info("finished.")
 
 slog.info("extensions by size for included files:")
 inc=0
-ext_keys=dict_sort_by_value_r(STATS["size_by_ext"])
-for ext in ext_keys:
+for ext in dict_sort_by_value_r(STATS["size_by_ext"]):
 	slog.info(" * %s: %d Mb" % (ext, STATS["size_by_ext"][ext] / 1024 / 1024))
 	if inc>5: break
 	inc+=1
 del(STATS["size_by_ext"])
-del(ext_keys)
 
 slog.info("largest files included:")
 STATS["size_by_fname"].reverse()
