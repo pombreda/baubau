@@ -254,16 +254,16 @@ def md5check_thread():
 			fp = os.popen("/usr/sbin/prelink -y --md5 '%s' 2> /dev/null" % (item))
 			memd5 = fp.readline()
 			if fp.close():
-				slog.info("PRELINK md5 query returned error, trying re-prelinking (%s)" % item)
+#				slog.info("PRELINK md5 query returned error, trying re-prelinking (%s)" % item)
 				status, memd5 = commands.getstatusoutput("/usr/sbin/prelink '%s'" % (item))
-				slog.info("SECOND QUERY for %s (status=%d,mdmd5=%s)" % (item,status,memd5) )
+#				slog.info("SECOND QUERY for %s (status=%d,mdmd5=%s)" % (item,status,memd5) )
 				fp = os.popen("/usr/sbin/prelink -y --md5 '%s'" % (item))
 				memd5 = fp.readline()
-				slog.info("SECOND QUERY for %s returned %s" % (item,memd5) )
+#				slog.info("SECOND QUERY for %s returned %s" % (item,memd5) )
 
 				# if prelink failed again, then compare actual file's md5
 				if status or fp.close():
-					slog.info("prelinked failed again for %s" % (item) )
+#					slog.info("prelinked failed again for %s" % (item) )
 					if isModified(item, pkg_files_data[item]["md5"], pkg_files_data[item]["size"]):
 						archive_files.put(item)
 					else:
