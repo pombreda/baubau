@@ -152,7 +152,7 @@ def stats_thread():
 		slog.info( "added %d (%d MiB) | %d processed (%2d%%) | %d queued",
 			STATS["archived_files_counter"], STATS["archived_size_total"] / 1024 / 1024,
 			STATS["archived_files_counter"] + STATS["excluded_files_counter"], ( STATS["archived_files_counter"] + STATS["excluded_files_counter"] ) * 100 / STATS["files_total"],
-			STATS["files_total"] - ( STATS["archived_files_counter"] + STATS["excluded_files_counter"] )
+			rpmqf_files.qsize() + md5_files.qsize() + excluded_files.qsize() + archive_files.qsize()
 		)
 
 		if rpmqf_files.qsize()==0 and md5_files.qsize()==0 and excluded_files.qsize()==0 and archive_files.qsize()==0:
@@ -271,13 +271,31 @@ def md5check_thread():
 				# if prelink failed again, then compare actual file's md5
 				if status or fp.close():
 #					slog.info("prelinked failed again for %s" % (item) )
+
+#					for fobj in pkg_files_data[item]:
+#						for fmd5,fsize in fobj:
+#							if isModified(item, fmd5, fsize):
+#								archive_files.put(item)
+#								break
+#					else:
+#						excluded_files.put(item)
+
 					if isModified(item, pkg_files_data[item]["md5"], pkg_files_data[item]["size"]):
 						archive_files.put(item)
 					else:
 						excluded_files.put(item)
+
 					continue
 					
 			memd5 = memd5.split(" ")[0]
+
+#			for fobj in pkg_files_data[item]:
+#				for fmd5,fsize in fobj:
+#					if fmd5 == memd5:
+#						excluded_files.put(item)
+#						break
+#			else:
+#				included_files.put(item)
 
 			if pkg_files_data[item]["md5"] != memd5:
 #				slog.info("prelink: %s - prelink_md5: %s - rpm md5: %s" % (item, memd5, pkg_files_data[item]["md5"]) )
@@ -287,8 +305,19 @@ def md5check_thread():
 
 			del memd5
 
-		elif isModified(item, pkg_files_data[item]["md5"], pkg_files_data[item]["size"]):
-			archive_files.put(item)
+		else:
+			# a regular not prelinked file
+			#
+#			for fobj in pkg_files_data[item]:
+#				for fmd5,fsize in fobj:
+#					if isModified(item, fmd5, fsize):
+#						archive_files.put(item)
+#						break
+#			else:
+#				excluded_files.put(item)
+
+			if isModified(item, pkg_files_data[item]["md5"], pkg_files_data[item]["size"]):
+				archive_files.put(item)
 
 		else:
 			excluded_files.put(item)
@@ -473,6 +502,10 @@ for h in mi:
 	fp.write( "%s-%s-%s\n" % (h['name'], h['version'], h['release']) )
 	for nome, fmd5, fsize in zip( h['FILENAMES'], h['filemd5s'], h['filesizes'] ):
 		pkg_files_data[nome]={ "md5":fmd5, "size":fsize }
+#		if pkg_files_data.has_key(nome):
+#			pkg_files_data[nome] = [ ("md5":fmd5, "size":fsize) ] + pkg_files_data[nome]
+#		else:
+#			pkg_files_data[nome] = [ ("md5":fmd5, "size":fsize) ]
 fp.close()
 
 #
