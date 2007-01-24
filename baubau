@@ -14,6 +14,7 @@ import tarfile
 import commands
 import getopt
 from string import lower
+from tempfile import mktemp
 
 ts = rpm.TransactionSet()
 
@@ -405,7 +406,12 @@ for opt, arg in opts:
 		OPTIONS["backup_info_dir"] = arg
 
 	elif opt in ("-z", "--targz"):
-		OPTIONS["tgz_out"] = arg
+		if arg[0:7] == "sftp://":
+			OPTIONS["lftp_url"]=arg
+			OPTIONS["tgz_out"]=mktemp()
+#			os.mkfifo(OPTIONS["tgz_out"])
+		else:
+			OPTIONS["tgz_out"] = arg
 
 	elif opt in ("-l", "--log"):
 		OPTIONS["log_file"]=arg
@@ -523,7 +529,7 @@ excluded_files = Queue()
 
 walk_finished=False
 
-STATS = { "archived_files_counter":0, "archived_size_total":0, "files_total":0, "files_total_size":0, "excluded_files_counter":0, "size_by_ext":{}, "size_by_fname":[] }
+STATS = { "archived_files_counter":0, "archived_size_total":0, "files_total":0, "files_total_size":0, "excluded_files_counter":0, "size_by_ext":{}, "size_by_fname":[], "lftp_url":"" }
 
 threads = []
 
