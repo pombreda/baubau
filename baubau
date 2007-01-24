@@ -112,7 +112,8 @@ def dict_sort_by_value_r(d):
 	""" Returns the keys of dictionary d sorted by their values """
 	items=d.items()
 	backitems=[ [v[1],v[0]] for v in items]
-	backitems.sort(reverse=True)
+	backitems.sort()
+	backitems.reverse()
 	return [ backitems[i][1] for i in range(0,len(backitems))]
 
 def isModified(fileName, fileMD5, fileSize=-1):
