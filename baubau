@@ -146,8 +146,13 @@ def stats_thread():
 	counter=0
 	while True:
 		time.sleep(10)
-#		slog.info( "[QSTATS tick=%2d rpmqf=%3d md5=%5d toarchive=%5d archived=%5d arsize=%d]" % ( counter, rpmqf_files.qsize(), md5_files.qsize(), archive_files.qsize(), STATS["archived_files_counter"], STATS["archived_size_total"] /1024/1024 ) )
-		slog.info( "archived %d/%d files (%2d%% processed - %d MB added)", STATS["archived_files_counter"], STATS["files_total"], ( STATS["archived_files_counter"] + STATS["excluded_files_counter"] ) * 100 / STATS["files_total"], STATS["archived_size_total"] / 1024 / 1024 )
+#		slog.info( "archived %d/%d files (%2d%% processed - %d MB added)", STATS["archived_files_counter"], STATS["files_total"], ( STATS["archived_files_counter"] + STATS["excluded_files_counter"] ) * 100 / STATS["files_total"], STATS["archived_size_total"] / 1024 / 1024 )
+
+		slog.info( "added %d (%d MiB) | %d processed (%2d%%) | %d queued",
+			STATS["archived_files_counter"], STATS["archived_size_total"] / 1024 / 1024,
+			STATS["archived_files_counter"] + STATS["excluded_files_counter"], ( STATS["archived_files_counter"] + STATS["excluded_files_counter"] ) * 100 / STATS["files_total"],
+			STATS["files_total"] - ( STATS["archived_files_counter"] + STATS["excluded_files_counter"] )
+		)
 
 		if rpmqf_files.qsize()==0 and md5_files.qsize()==0 and excluded_files.qsize()==0 and archive_files.qsize()==0:
 			walk_finished=True
