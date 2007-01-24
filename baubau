@@ -141,6 +141,13 @@ def isModified(fileName, fileMD5, fileSize=-1):
 	else:
 		return 0
 
+def queues_empty():
+
+	if rpmqf_files.qsize()==0 and md5_files.qsize()==0 and excluded_files.qsize()==0 and archive_files.qsize()==0:
+		return True
+	else:
+		return False
+
 def stats_thread(): 
 	global walk_finished
 
@@ -155,8 +162,8 @@ def stats_thread():
 			rpmqf_files.qsize() + md5_files.qsize() + excluded_files.qsize() + archive_files.qsize()
 		)
 
-		if rpmqf_files.qsize()==0 and md5_files.qsize()==0 and excluded_files.qsize()==0 and archive_files.qsize()==0:
-			walk_finished=True
+#		if rpmqf_files.qsize()==0 and md5_files.qsize()==0 and excluded_files.qsize()==0 and archive_files.qsize()==0:
+		if queues_empty() and walk_finished:
 			slog.debug("queues empty, thread exiting")
 			return
 		counter+=1
@@ -169,7 +176,7 @@ def excluded_thread():
 		try:
 			item = excluded_files.get(True,5)
 		except Empty:
-			if walk_finished:
+			if queues_empty() and walk_finished:
 				fp.close()
 				fpkg.close()
 				return
@@ -201,7 +208,7 @@ def archive_thread():
 		try:
 			item = archive_files.get(True,5)
 		except Empty:
-			if walk_finished:
+			if queues_empty() and walk_finished:
 				slog.info("%d files processed (%d MB), closing archive." % ( STATS["archived_files_counter"], STATS["archived_size_total"] / 1024 / 1024 ) )
 				if tar:
 					tar.close()
@@ -247,7 +254,7 @@ def md5check_thread():
 		try:
 			item = md5_files.get(True,1) 
 		except Empty:
-			if walk_finished:
+			if queues_empty() and walk_finished:
 				slog.debug("walk is finished, thread exiting")
 				return
 			continue
@@ -326,7 +333,7 @@ def rpmqf_thread():
 		try:
 			item = rpmqf_files.get(True,5)
 		except Empty:
-			if walk_finished:
+			if queues_empty() and walk_finished:
 				slog.debug("walk is finished, thread exiting")
 				return
 			continue
@@ -578,7 +585,9 @@ try:
 	for dir in fs_to_backup:
 		printDir(dir)
 except KeyboardInterrupt:
-		graceful_abort = True
+	walk_finished = -1
+else:
+	walk_finished = True
 
 slog.debug("waiting for threads to finish...")
 
