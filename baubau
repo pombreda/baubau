@@ -227,10 +227,11 @@ def archive_thread():
 				ext = item.split("/")[-1]
 				if ext.find(".") > 0:
 					ext =  lower(ext.split(".")[-1])
-					if STATS["size_by_ext"].has_key(ext):
-						STATS["size_by_ext"][ext]+=get_file_size(item)
-					else:
-						STATS["size_by_ext"][ext]=get_file_size(item)
+					if len(ext) > 0:
+						if STATS["size_by_ext"].has_key(ext):
+							STATS["size_by_ext"][ext]+=get_file_size(item)
+						else:
+							STATS["size_by_ext"][ext]=get_file_size(item)
 				del ext
 
 				STATS["size_by_fname"].append( (item,get_file_size(item) ) )
@@ -379,7 +380,7 @@ for opt, arg in opts:
 		OPTIONS["always_md5"]=True
 
 if not OPTIONS["backup_info_dir"]:
-	OPTIONS["backup_info_dir"]="/root/baubau-%s" % time.strftime("%d%m%Y-%H%M%S")
+	OPTIONS["backup_info_dir"]="/root/baubau-%s" % time.strftime("%Y%m%d-%H%M%S")
 	slog.info("no output directory specified, using %s" % OPTIONS["backup_info_dir"] )
 
 if OPTIONS["log_file"]:
