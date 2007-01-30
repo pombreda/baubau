@@ -73,11 +73,9 @@ class file_filter_class:
 
 	def is_included(self,item):
 		return (len(self.include_re) and self.include_ro.search(item))
-#		return (re.search(self.include_re, item) and len(self.include_re))
 
 	def is_excluded(self,item):
 		return (len(self.exclude_re) and self.exclude_ro.search(item))
-#		return (re.search(self.exclude_re, item) and len(self.exclude_re))
 
 	def compile(self):
 		self.exclude_ro = re.compile(self.exclude_re)
@@ -172,7 +170,6 @@ def stats_thread():
 	counter=0
 	while True:
 		time.sleep(10)
-#		slog.info( "archived %d/%d files (%2d%% processed - %d MB added)", STATS["archived_files_counter"], STATS["files_total"], ( STATS["archived_files_counter"] + STATS["excluded_files_counter"] ) * 100 / STATS["files_total"], STATS["archived_size_total"] / 1024 / 1024 )
 
 		slog.info( "added %d (%d MiB) | %d processed (%2d%%) | %d queued",
 			STATS["archived_files_counter"], STATS["archived_size_total"] / 1024 / 1024,
@@ -180,7 +177,6 @@ def stats_thread():
 			rpmqf_files.qsize() + md5_files.qsize() + excluded_files.qsize() + archive_files.qsize()
 		)
 
-#		if rpmqf_files.qsize()==0 and md5_files.qsize()==0 and excluded_files.qsize()==0 and archive_files.qsize()==0:
 		if queues_empty() and walk_finished:
 			slog.debug("queues empty, thread exiting")
 			return
@@ -277,8 +273,6 @@ def md5check_thread():
 				return
 			continue
 
-#		print "md5_thread with id %d doing work for %s" % ( my_id, item )
-
 		if os.path.islink(item):
 			continue
 
@@ -286,16 +280,12 @@ def md5check_thread():
 			fp = os.popen("/usr/sbin/prelink -y --md5 '%s' 2> /dev/null" % (item))
 			memd5 = fp.readline()
 			if fp.close():
-#				slog.info("PRELINK md5 query returned error, trying re-prelinking (%s)" % item)
 				status, memd5 = commands.getstatusoutput("/usr/sbin/prelink '%s'" % (item))
-#				slog.info("SECOND QUERY for %s (status=%d,mdmd5=%s)" % (item,status,memd5) )
 				fp = os.popen("/usr/sbin/prelink -y --md5 '%s'" % (item))
 				memd5 = fp.readline()
-#				slog.info("SECOND QUERY for %s returned %s" % (item,memd5) )
 
 				# if prelink failed again, then compare actual file's md5
 				if status or fp.close():
-#					slog.info("prelinked failed again for %s" % (item) )
 
 					for fmd5,fsize in pkg_files_data[item]:
 						if isModified(item, fmd5, fsize):
@@ -303,11 +293,6 @@ def md5check_thread():
 							break
 					else:
 						excluded_files.put(item)
-
-#					if isModified(item, pkg_files_data[item]["md5"], pkg_files_data[item]["size"]):
-#						archive_files.put(item)
-#					else:
-#						excluded_files.put(item)
 
 					continue
 					
@@ -320,12 +305,6 @@ def md5check_thread():
 			else:
 				archive_files.put(item)
 
-#			if pkg_files_data[item]["md5"] != memd5:
-#				slog.info("prelink: %s - prelink_md5: %s - rpm md5: %s" % (item, memd5, pkg_files_data[item]["md5"]) )
-#				archive_files.put(item)
-#			else:
-#				excluded_files.put(item)
-
 			del memd5
 
 		else:
@@ -337,12 +316,6 @@ def md5check_thread():
 					break
 			else:
 				excluded_files.put(item)
-
-#			if isModified(item, pkg_files_data[item]["md5"], pkg_files_data[item]["size"]):
-#				archive_files.put(item)
-
-#		else:
-#			excluded_files.put(item)
 
 def rpmqf_thread():
 	global walk_finished
