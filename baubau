@@ -30,6 +30,7 @@ import random
 import tarfile
 import commands
 import getopt
+import socket
 from string import lower
 from tempfile import mktemp
 
@@ -399,7 +400,9 @@ for opt, arg in opts:
 		if arg[0:7] == "sftp://":
 			OPTIONS["lftp_url"]=arg
 			OPTIONS["tgz_out"]=mktemp()
-#			os.mkfifo(OPTIONS["tgz_out"])
+			os.mkfifo(OPTIONS["tgz_out"])
+			print 'lftp -c "open %s; put /dev/stdin -o \"baubau-%s-%s.tar.gz\"" < %s' % (OPTIONS["lftp_url"], socket.gethostname(), time.strftime("%Y%m%d-%H%M%S"), OPTIONS["tgz_out"]) 
+
 		else:
 			OPTIONS["tgz_out"] = arg
 
@@ -462,7 +465,7 @@ file_filter=file_filter_class()
 # if an actual archive is going to be created, we make sure that backup_info_dir is included
 if OPTIONS["tgz_out"]:
 	file_filter.add_include(OPTIONS["backup_info_dir"])
-file_filter.add_exclude('^/(dev|tmp)|/home/.*/(mimeinfo\.cache|icon-theme\.cache|\.beagle|\.Trash|\.thumbnails)')
+file_filter.add_exclude('^/(dev|tmp)|^/home/.*/(mimeinfo\.cache|icon-theme\.cache|\.beagle|\.Trash|\.thumbnails)|^/var/cache/(beagle|yum)/')
 
 try:
 	file_filter.add_include_from_file(OPTIONS["include_file"])
