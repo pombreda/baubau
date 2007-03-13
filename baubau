@@ -33,6 +33,7 @@ import getopt
 import socket
 from string import lower
 from tempfile import mktemp
+import pickle
 
 ts = rpm.TransactionSet()
 
@@ -87,6 +88,11 @@ class prelink_class:
 	def __init__(self):
 		self.include_re=""
 		self.exclude_re=""
+		self.cache={}
+
+		try:	self.restore()
+		except: pass
+
 		fp=open("/etc/prelink.conf","r")
 		for line in fp.readlines():
 			if line[0]=="#":
@@ -95,21 +101,41 @@ class prelink_class:
 			if   lip[0]=="-b":
 				if len(self.exclude_re)>0:
 					self.exclude_re = "%s|" % self.exclude_re
-				self.exclude_re = "%s^%s$" % ( self.exclude_re, lip[1] )
+				slog.debug("prelink excluding: %s" % lip[1])
+				self.exclude_re = "%s^%s" % ( self.exclude_re, lip[1] )
 			elif lip[0]=="-l":
 				if len(self.include_re)>0:
 					self.include_re = "%s|" % self.include_re
+				slog.debug("prelink including: %s" % lip[1])
 				self.include_re = "%s^%s" % ( self.include_re, lip[1] )
 			else:
 				slog.warning("invalid line in /etc/prelink.conf")
 		self.include_re = self.include_re.replace(".", "\.").replace("*", ".*")
 		self.exclude_re = self.exclude_re.replace(".", "\.").replace("*", ".*")
+		slog.debug("prelink include list: %s" % self.include_re)
+		slog.debug("prelink exclude list: %s" % self.exclude_re)
 
 	def is_prelinked(self, item):
 		if re.search(self.include_re, item) and not re.search(self.exclude_re, item):
 			return True
 		else:
 			return False
+
+	def add_cache(self, fname, fmd5, realmd5):
+		self.cache[fname]=(fmd5,realmd5)
+
+	def get_cache(self,fname):
+		return self.cache[fname]
+
+	def restore(self):
+		pkl_file = open('/etc/baubau/prelink_md5.cache', 'rb')
+		self.cache = pickle.load(pkl_file)
+		pkl_file.close()
+
+	def store(self):
+		output = open('/etc/baubau/prelink_md5.cache', 'wb')
+		pickle.dump(self.cache, output)
+		output.close()
 
 def get_file_size(fname):
 	try:
@@ -119,7 +145,7 @@ def get_file_size(fname):
 
 def get_md5(fname):
 	m = md5.new()
-	f = open(fileName,"r")
+	f = open(fname,"r")
 	data = f.read()
 	f.close()
 	m.update(data)
@@ -143,16 +169,13 @@ def isModified(fileName, fileMD5, fileSize=-1):
 		elif not OPTIONS["always_md5"]:
 			return 0
 
-	m = md5.new()
 	try:
-		f = open(fileName,"r")
-		data = f.read()
-		f.close()
+		realmd5=get_md5(fileName)
 	except:
 		slog.error("error opening %s for md5" % fileName)
 		return 0
-	m.update(data)
-	if fileMD5 != m.hexdigest():
+
+	if fileMD5 != realmd5:
 		slog.debug( "adding because md5 differs %s: %s ~ %s" % (fileName,fileMD5,m.hexdigest()) )
 		return 1
 	else:
@@ -271,6 +294,7 @@ def md5check_thread():
 		except Empty:
 			if queues_empty() and walk_finished:
 				slog.debug("walk is finished, thread exiting")
+				prelinker.store()
 				return
 			continue
 
@@ -278,26 +302,43 @@ def md5check_thread():
 			continue
 
 		if (os.stat(item)[ST_MODE] & (S_IXUSR|S_IXGRP|S_IXOTH)) and prelinker.is_prelinked(item):
-			fp = os.popen("/usr/sbin/prelink -y --md5 '%s' 2> /dev/null" % (item))
-			memd5 = fp.readline()
-			if fp.close():
-				status, memd5 = commands.getstatusoutput("/usr/sbin/prelink '%s'" % (item))
-				fp = os.popen("/usr/sbin/prelink -y --md5 '%s'" % (item))
+			try:
+				realmd5, memd5 = prelinker.get_cache(item)
+			except:	
+				slog.debug("could not find %s in prelinker md5 cache" % item)
+				pass
+			else:
+				gotmd5=get_md5(item)
+				if gotmd5 != realmd5:
+					slog.debug("actual md5 for %s does not match the one in cache (%s != %s), regenerating" % (item,gotmd5,realmd5))
+					memd5=""
+				else:
+					slog.debug("prelinker md5 found for %s" % item)
+				del realmd5
+
+			if not len(memd5):
+				fp = os.popen("/usr/sbin/prelink -y --md5 '%s' 2> /dev/null" % (item))
 				memd5 = fp.readline()
+				if fp.close():
+					status, memd5 = commands.getstatusoutput("/usr/sbin/prelink '%s'" % (item))
+					fp = os.popen("/usr/sbin/prelink -y --md5 '%s'" % (item))
+					memd5 = fp.readline()
 
-				# if prelink failed again, then compare actual file's md5
-				if status or fp.close():
+					# if prelink failed again, then compare actual file's md5
+					if status or fp.close():
 
-					for fmd5,fsize in pkg_files_data[item]:
-						if isModified(item, fmd5, fsize):
-							archive_files.put(item)
-							break
-					else:
-						excluded_files.put(item)
+						for fmd5,fsize in pkg_files_data[item]:
+							if isModified(item, fmd5, fsize):
+								archive_files.put(item)
+								break
+						else:
+							excluded_files.put(item)
 
-					continue
+						continue
 					
-			memd5 = memd5.split(" ")[0]
+				memd5 = memd5.split(" ")[0]
+
+				prelinker.add_cache(item,gotmd5,memd5)
 
 			for fmd5,fsize in pkg_files_data[item]:
 				if fmd5 == memd5:
