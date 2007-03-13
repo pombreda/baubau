@@ -1,7 +1,7 @@
 Summary: A multithreaded backup utility to include modified files from packages (using RPMdb) and new files.
 Name: baubau
 Version: 1.0
-Release: 0
+Release: 1
 License: GPL
 Source:%{name}-%{version}.tar.bz2
 Group: Development/Debuggers
@@ -10,9 +10,12 @@ BuildRoot: %{_builddir}/%{name}-root
 URL: http://www.navid.it
 Packager: navid@navid.it
 %description
-zzz is not a real tool, it's an example showing one way
-to build an rpm.
+baubau is a multithreaded backup utility which walks the file-system
+searching for files belonging to packages which have been modified
+(using RPMdb) and for new files (which don't belong to any package).
 
+This way it is possible to only archive files which otherwise would
+be unrecoverrable.
 %prep
 
 %setup -q
