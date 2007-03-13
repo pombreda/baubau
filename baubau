@@ -302,13 +302,16 @@ def md5check_thread():
 			continue
 
 		if (os.stat(item)[ST_MODE] & (S_IXUSR|S_IXGRP|S_IXOTH)) and prelinker.is_prelinked(item):
+
+			gotmd5=get_md5(item)
+
 			try:
 				realmd5, memd5 = prelinker.get_cache(item)
 			except:	
 				slog.debug("could not find %s in prelinker md5 cache" % item)
+				memd5=""
 				pass
 			else:
-				gotmd5=get_md5(item)
 				if gotmd5 != realmd5:
 					slog.debug("actual md5 for %s does not match the one in cache (%s != %s), regenerating" % (item,gotmd5,realmd5))
 					memd5=""
