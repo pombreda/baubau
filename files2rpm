@@ -3,7 +3,6 @@
 import sys, os, getopt
 from shutil import move
 from threading import Thread
-import tarfile
 
 OPT = { "fstree_path" : "/var/baubau", "rpmbuild_path":"/var/tmp/files2rpm_rpmbuild", "files_fp":None, "pkg_path":None,
 	"rpm_name":"fstree", "rpm_ver":"1.0", "rpm_rel":"0", "rpm_path":".", "arch":"noarch", "file_path":None }
@@ -147,15 +146,6 @@ fp.close()
 
 os.system('rpmbuild --clean "%s"' % OPT["rpmbuild_spec_path"])
 os.system('rpmbuild -bp "%s"' % OPT["rpmbuild_spec_path"])
-
-#tar = tarfile.open("%s/BUILD/%s-root/%s/fstree.tar" % (OPT["rpmbuild_path"], OPT["rpm_name"], OPT["fstree_path"]), "w")
-#tar.dereference = False
-
-#for line in OPT["files_fp"]:
-#	line=line.strip()
-#	tar.add(line)
-
-#tar.close()
 
 os.system('tar Tcf %s %s/BUILD/%s-root/%s/fstree.tar' % (OPT["file_path"], OPT["rpmbuild_path"], OPT["rpm_name"], OPT["fstree_path"]))
 
