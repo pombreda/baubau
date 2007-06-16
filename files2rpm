@@ -27,13 +27,18 @@ def _mkdir(newdir):
 
 def usage():
         print "Usage: files2rpm [OPTION]"
-        print "Build an RPM from a list of files."
-        print "Additionally, specify a file containing the output of \"rpm -qa\" to add the dependencies to those packages."
+        print "Build an RPM containing files from a specified list."
+        print "Optionally, add a dependency to packages from list (formatted as \"rpm -qa\"."
         print ""
-        print "  -i, --files             list of files to be archive"
-        print "  -p, --packages          list of packages to add a dependency for"
-        print "  -a, --arch              specify an architecture (default is noarch)"
+        print "  -i, --files <file>      file containing list of files to be archive"
+        print "  -p, --packages <file>   file containing list of packages to add a dependency for"
+        print "  -a, --arch <arch>       specify an architecture (default is noarch)"
+	return
         print ""
+        print "  -preserve original attributes (default)"
+        print "  -preserve attributes of files to be overwritten"
+        print ""
+
 
 try:
 	opts, args = getopt.getopt(sys.argv[1:], "hi:p:a:", ["help", "files", "packages"])
