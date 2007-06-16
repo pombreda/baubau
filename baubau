@@ -525,6 +525,8 @@ file_filter=file_filter_class()
 # if an actual archive is going to be created, we make sure that backup_info_dir is included
 if OPTIONS["tgz_out"]:
 	file_filter.add_include(OPTIONS["backup_info_dir"])
+	file_filter.add_exclude(OPTIONS["tgz_out"])
+
 file_filter.add_exclude('^/(dev|tmp)|^/home/.*/(mimeinfo\.cache|icon-theme\.cache|\.beagle|\.Trash|\.thumbnails)|^/var/cache/(beagle|yum)/')
 
 try:
@@ -535,8 +537,6 @@ try:
 	file_filter.add_exclude_from_file(OPTIONS["exclude_file"])
 except IOError:
 	pass
-
-if OPTIONS["tgz_out"]:	file_filter.add_exclude(OPTIONS["tgz_out"])
 
 file_filter.compile()
 
@@ -609,8 +609,8 @@ stats_t = Thread(target=stats_thread)
 stats_t.start()
 threads.append(stats_t)
 
-def printDir( path ):
-	"Print a directory and it's files recursively"
+def walk_fs_dir( path ):
+	"Parse a directory and it's files recursively"
 
 #	CHECKME
 #        if os.path.islink(path):
@@ -631,7 +631,7 @@ def printDir( path ):
 			newPath = "/" + item
 
 		if os.path.isdir(newPath) and not os.path.islink(newPath) and not os.path.ismount(newPath):
-			printDir(newPath)
+			walk_fs_dir(newPath)
 		elif os.path.islink(newPath) or os.path.isfile(newPath):
 			rpmqf_files.put(newPath)
 
@@ -642,7 +642,7 @@ slog.debug("walking the fs")
 
 try:
 	for dir in fs_to_backup:
-		printDir(dir)
+		walk_fs_dir(dir)
 except KeyboardInterrupt:
 	walk_finished = -1
 else:
