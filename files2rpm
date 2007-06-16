@@ -2,6 +2,8 @@
 
 import sys, os, getopt
 from shutil import move
+from threading import Thread
+import tarfile
 
 OPT = { "fstree_path" : "/var/baubau", "rpmbuild_path":"/var/tmp/files2rpm_rpmbuild", "files_fp":None, "pkg_path":None,
 	"rpm_name":"fstree", "rpm_ver":"1.0", "rpm_rel":"0", "rpm_path":".", "arch":"noarch" }
@@ -85,6 +87,10 @@ fp=open(OPT["rpmbuild_spec_path"],"w")
 
 fp.write("""%define _unpackaged_files_terminate_build 0
 %define _topdir """ + OPT["rpmbuild_path"] + """
+#%define debug_package %{nil}
+%debug_package %{nil}
+%define __prelink_undo_cmd %{nil}
+%define __os_install_post %{nil}
 
 Summary: A multithreaded backup utility to include modified files from packages (using RPMdb) and new files.
 Name: """ + OPT["rpm_name"] + """
@@ -114,34 +120,22 @@ searching for files belonging to packages which have been modified
 This way it is possible to only archive files which otherwise would
 be unrecoverrable.
 %prep
-rm -rf $RPM_BUILD_ROOT
-mkdir -p $RPM_BUILD_ROOT""" + OPT["fstree_path"] + """
+#rm -rf $RPM_BUILD_ROOT
+if [ ! -d $RPM_BUILD_ROOT""" + OPT["fstree_path"] + """ ]; then
+    mkdir -p $RPM_BUILD_ROOT""" + OPT["fstree_path"] + """
+fi
 
 %build
 
 %install
-ln -s / $RPM_BUILD_ROOT""" + OPT["fstree_path"] + "/fstree" + """
 
 %clean
 rm -rf $RPM_BUILD_ROOT
 
 %files
-""")
+""" + OPT["fstree_path"] + """/fstree.tar
 
-for line in OPT["files_fp"]:
-	line=line.strip()
-	try:
-		if not os.path.islink(line): os.stat(line)
-	except:
-		print "file missing!", line
-	else:
-		if not line.isalpha():
-			line = '"' + OPT["fstree_path"] + "/fstree/" + line + '"'
-		else:
-			line = OPT["fstree_path"] + "/fstree/" + line
-		fp.write(line + "\n")
-
-fp.write("""%doc
+%doc
 #/var/baubau/fstree/README
 
 %changelog
@@ -151,6 +145,20 @@ fp.write("""%doc
 
 fp.close()
 
-os.system('sudo rpmbuild -bb "%s"' % OPT["rpmbuild_spec_path"])
+os.system('rpmbuild --clean "%s"' % OPT["rpmbuild_spec_path"])
+os.system('rpmbuild -bp "%s"' % OPT["rpmbuild_spec_path"])
 
-move("%s/RPMS/%s/%s-%s-%s.%s.rpm" % (OPT["rpmbuild_path"], OPT["arch"], OPT["rpm_name"], OPT["rpm_ver"], OPT["rpm_rel"], OPT["arch"]), OPT["rpm_path"])
+tar = tarfile.open("%s/BUILD/%s-root/%s/fstree.tar" % (OPT["rpmbuild_path"], OPT["rpm_name"], OPT["fstree_path"]), "w")
+tar.dereference = False
+
+for line in OPT["files_fp"]:
+	line=line.strip()
+	tar.add(line)
+
+tar.close()
+
+os.system('rpmbuild -bb "%s"' % OPT["rpmbuild_spec_path"])
+
+os.system('rpmbuild --clean "%s"' % OPT["rpmbuild_spec_path"])
+
+#move("%s/RPMS/%s/%s-%s-%s.%s.rpm" % (OPT["rpmbuild_path"], OPT["arch"], OPT["rpm_name"], OPT["rpm_ver"], OPT["rpm_rel"], OPT["arch"]), OPT["rpm_path"])
