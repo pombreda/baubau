@@ -56,10 +56,8 @@ for opt, arg in opts:
 		sys.exit()
 
 	elif opt in ("-i", "--files"):
-		if arg == "-":	OPT["files_fp"] = sys.stdin
-		else:
-			OPT["files_fp"] = open(arg,"r")
-			OPT["file_path"] = arg
+		OPT["files_fp"] = open(arg,"r")
+		OPT["file_path"] = arg
 
 	elif opt in ("-p", "--packages"):
 		if arg == "auto":
@@ -73,7 +71,7 @@ for opt, arg in opts:
 	elif opt in ("-o", "--outdir"):
 		arg = os.path.abspath(arg)
 		OPT["rpm_path"] = arg
-		OPT["rpmbuild_path"]=arg + "/rpmbuild_tmp"
+		OPT["rpmbuild_path"] = arg + "/rpmbuild_tmp"
 
 if not OPT["files_fp"]:
 	usage()
