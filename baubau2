@@ -1,0 +1,710 @@
+#!/usr/bin/env python
+
+# Backup utility
+# Copyright (C) 2007  Navid Sheikhol-Eslami <navid@navid.it>
+#
+# This library is free software; you can redistribute it and/or
+# modify it under the terms of the GNU Lesser General Public
+# License as published by the Free Software Foundation; either
+# version 2.1 of the License, or (at your option) any later version.
+#
+# This library is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+
+from threading import Thread
+import logging
+from Queue import *
+import os, sys
+from stat import *
+import rpm
+import md5
+import re
+import time
+import random
+import tarfile
+import commands
+import getopt
+import socket
+from string import lower
+from tempfile import mktemp
+import pickle
+from pykickstart.data import *
+from pykickstart.parser import *
+
+ts = rpm.TransactionSet()
+
+class file_filter_class:
+
+	def __init__(self):
+		self.include_re=""
+		self.exclude_re=""
+
+	def add_include(self,pattern):
+		if len(self.include_re)>0:
+			self.include_re = "%s|" % self.include_re
+		self.include_re = "%s%s" % (self.include_re,pattern)
+
+	def add_exclude(self,pattern):
+		if len(self.exclude_re)>0:
+			self.exclude_re = "%s|" % self.exclude_re
+		self.exclude_re = "%s%s" % (self.exclude_re,pattern)
+
+	def add_include_from_file(self,fname):
+		fp=open(fname,"r")
+		for line in fp.readlines():
+			if line[0]=="#": continue
+			self.add_include(line[:-1])
+		fp.close()
+
+	def add_exclude_from_file(self,fname):
+		fp=open(fname,"r")
+		for line in fp.readlines():
+			if line[0]=="#": continue
+			self.add_exclude(line[:-1])
+		fp.close()
+
+	def match(self,item):
+		if not self.is_included(item) and self.is_excluded(item):
+			return False
+		else:
+			return True
+
+	def is_included(self,item):
+		return (len(self.include_re) and self.include_ro.search(item))
+
+	def is_excluded(self,item):
+		return (len(self.exclude_re) and self.exclude_ro.search(item))
+
+	def compile(self):
+		self.exclude_ro = re.compile(self.exclude_re)
+		self.include_ro = re.compile(self.include_re)
+
+class kickstart:
+
+	class CustomHandlers(KickstartHandlers):
+		def doBootloader (self, args):
+			KickstartHandlers.doBootloader(self, args)
+
+	def __init__(self):
+		self.ksdata = KickstartData()
+		self.kshandlers = CustomHandlers(ksdata)
+        	self.ksparser = KickstartParser(ksdata, kshandlers)
+
+	def parse(self,ksname):
+		self.ksparser.readKickstart(ksname)
+
+class prelink_class:
+
+	def __init__(self):
+		self.include_re=""
+		self.exclude_re=""
+		self.cache={}
+
+		try:	self.restore()
+		except: pass
+
+		fp=open("/etc/prelink.conf","r")
+		for line in fp.readlines():
+			if line[0]=="#":
+				continue
+			lip=line.split()
+			if   lip[0]=="-b":
+				if len(self.exclude_re)>0:
+					self.exclude_re = "%s|" % self.exclude_re
+				slog.debug("prelink excluding: %s" % lip[1])
+				self.exclude_re = "%s^%s" % ( self.exclude_re, lip[1] )
+			elif lip[0]=="-l":
+				if len(self.include_re)>0:
+					self.include_re = "%s|" % self.include_re
+				slog.debug("prelink including: %s" % lip[1])
+				self.include_re = "%s^%s" % ( self.include_re, lip[1] )
+			else:
+				slog.warning("invalid line in /etc/prelink.conf")
+		self.include_re = self.include_re.replace(".", "\.").replace("*", ".*")
+		self.exclude_re = self.exclude_re.replace(".", "\.").replace("*", ".*")
+		slog.debug("prelink include list: %s" % self.include_re)
+		slog.debug("prelink exclude list: %s" % self.exclude_re)
+
+	def is_prelinked(self, item):
+		if re.search(self.include_re, item) and not re.search(self.exclude_re, item):
+			return True
+		else:
+			return False
+
+	def add_cache(self, fname, fmd5, realmd5):
+		self.cache[fname]=(fmd5,realmd5)
+
+	def get_cache(self,fname):
+		return self.cache[fname]
+
+	def restore(self):
+		pkl_file = open('/etc/baubau/prelink_md5.cache', 'rb')
+		self.cache = pickle.load(pkl_file)
+		pkl_file.close()
+
+	def store(self):
+		output = open('/etc/baubau/prelink_md5.cache', 'wb')
+		pickle.dump(self.cache, output)
+		output.close()
+
+def get_file_size(fname):
+	try:
+		return  os.stat(fname)[ST_SIZE]
+	except:
+		return -1
+
+def get_md5(fname):
+	m = md5.new()
+	f = open(fname,"r")
+	data = f.read()
+	f.close()
+	m.update(data)
+	return m.hexdigest()
+
+def _mkdir(newdir):
+    """works the way a good mkdir should :)
+        - already exists, silently complete
+        - regular file in the way, raise an exception
+        - parent directory(ies) does not exist, make them as well
+    """
+    if os.path.isdir(newdir):
+        pass
+    elif os.path.isfile(newdir):
+        raise OSError("a file with the same name as the desired " \
+                      "dir, '%s', already exists." % newdir)
+    else:
+        head, tail = os.path.split(newdir)
+        if head and not os.path.isdir(head):
+            _mkdir(head)
+        #print "_mkdir %s" % repr(newdir)
+        if tail:
+            os.mkdir(newdir)
+
+def dict_sort_by_value_r(d):
+	""" Returns the keys of dictionary d sorted by their values """
+	items=d.items()
+	backitems=[ [v[1],v[0]] for v in items]
+	backitems.sort()
+	backitems.reverse()
+	return [ backitems[i][1] for i in range(0,len(backitems))]
+
+def isModified(fileName, fileMD5, fileSize=-1):
+
+	if fileSize != -1:
+		tmp_fsize = get_file_size(fileName)
+		if fileSize != tmp_fsize:
+			slog.debug( "adding because size differs %s: %s ~ %s" % (fileName,fileSize,tmp_fsize) )
+			return 1
+		elif not OPTIONS["always_md5"]:
+			return 0
+
+	try:
+		realmd5=get_md5(fileName)
+	except:
+		slog.error("error opening %s for md5" % fileName)
+		return 0
+
+	if fileMD5 != realmd5:
+		slog.debug( "adding because md5 differs %s: %s ~ %s" % (fileName,fileMD5,m.hexdigest()) )
+		return 1
+	else:
+		return 0
+
+def queues_empty():
+
+	if rpmqf_files.qsize()==0 and md5_files.qsize()==0 and excluded_files.qsize()==0 and archive_files.qsize()==0:
+		return True
+	else:
+		return False
+
+def stats_thread(): 
+	global walk_finished
+
+	counter=0
+	while True:
+		time.sleep(10)
+
+		slog.info( "added %d (%d MiB) | %d processed (%2d%%) | %d queued",
+			STATS["archived_files_counter"], STATS["archived_size_total"] / 1024 / 1024,
+			STATS["archived_files_counter"] + STATS["excluded_files_counter"], ( STATS["archived_files_counter"] + STATS["excluded_files_counter"] ) * 100 / STATS["files_total"],
+			rpmqf_files.qsize() + md5_files.qsize() + excluded_files.qsize() + archive_files.qsize()
+		)
+
+		if queues_empty() and walk_finished:
+			slog.debug("queues empty, thread exiting")
+			return
+		counter+=1
+
+def excluded_thread(): 
+
+	fp=open("%s/excluded_files" % OPTIONS["backup_info_dir"], "w")
+	fpkg=open("%s/excluded_pkg_files" % OPTIONS["backup_info_dir"], "w")
+	while True: 
+		try:
+			item = excluded_files.get(True,5)
+		except Empty:
+			if queues_empty() and walk_finished:
+				fp.close()
+				fpkg.close()
+				return
+			continue
+
+		try:
+			del pkg_files_data[item]
+		except KeyError:
+			fp.write("%s\n" % item)
+		else:
+			fpkg.write("%s\n" % item)
+
+		STATS["excluded_files_counter"]+=1
+
+def archive_thread(): 
+	global walk_finished
+
+	if OPTIONS["tgz_out"]:
+		if os.path.isfile(OPTIONS["tgz_out"]):
+			os.unlink(OPTIONS["tgz_out"])
+		tar = tarfile.open(OPTIONS["tgz_out"], "w:gz")
+		tar.dereference = False
+	elif OPTIONS["rpm_out"]:
+                if os.path.isfile(OPTIONS["rpm_out"]):
+                        os.unlink(OPTIONS["rpm_out"])
+                tar = tarfile.open(OPTIONS["rpm_out"], "w")
+                tar.dereference = False
+	else:
+		tar = False
+
+	txt = open("%s/included_files" % OPTIONS["backup_info_dir"],'w')
+
+	while True: 
+		try:
+			item = archive_files.get(True,5)
+		except Empty:
+			if queues_empty() and walk_finished:
+				slog.info("%d files processed (%d MB), closing archive." % ( STATS["archived_files_counter"], STATS["archived_size_total"] / 1024 / 1024 ) )
+				if tar:
+					tar.close()
+				txt.close()
+				return
+			continue
+
+		slog.debug("adding %s" % item)
+		try:
+			if tar:
+				tar.add(item)
+			txt.write(item.encode("string_escape") + '\n')
+		except:
+			slog.error("error reading %s" % item)
+			excluded_files.put(item)
+		else:
+			STATS["archived_files_counter"]+=1
+			STATS["archived_size_total"]+=get_file_size(item)
+
+			# see if maybe we can clean up some data from memory
+			try:
+				del pkg_files_data[item]
+			except KeyError:
+				ext = item.split("/")[-1]
+				if ext.find(".") > 0:
+					ext =  lower(ext.split(".")[-1])
+					if len(ext) > 0:
+						if STATS["size_by_ext"].has_key(ext):
+							STATS["size_by_ext"][ext]+=get_file_size(item)
+						else:
+							STATS["size_by_ext"][ext]=get_file_size(item)
+				del ext
+
+				STATS["size_by_fname"].append( (item,get_file_size(item) ) )
+				STATS["size_by_fname"].sort(lambda x,y: cmp(x[1],y[1]))
+				STATS["size_by_fname"]=STATS["size_by_fname"][-5:]
+
+def md5check_thread(): 
+	global walk_finished
+	my_id = random.randint(1, 100)
+
+	while True:
+		try:
+			item = md5_files.get(True,1) 
+		except Empty:
+			if queues_empty() and walk_finished:
+				slog.debug("walk is finished, thread exiting")
+				prelinker.store()
+				return
+			continue
+
+		if os.path.islink(item):
+			continue
+
+		if (os.stat(item)[ST_MODE] & (S_IXUSR|S_IXGRP|S_IXOTH)) and prelinker.is_prelinked(item):
+
+			try:
+				gotmd5=get_md5(item)
+			except IOError:
+				slog.error("cannot read file %s, permission error?" % item)
+				break
+
+			try:
+				realmd5, memd5 = prelinker.get_cache(item)
+			except:	
+				slog.debug("could not find %s in prelinker md5 cache" % item)
+				memd5=""
+				pass
+			else:
+				if gotmd5 != realmd5:
+					slog.debug("actual md5 for %s does not match the one in cache (%s != %s), regenerating" % (item,gotmd5,realmd5))
+					memd5=""
+				else:
+					slog.debug("prelinker md5 found for %s" % item)
+				del realmd5
+
+			if not len(memd5):
+				fp = os.popen("/usr/sbin/prelink -y --md5 '%s' 2> /dev/null" % (item))
+				memd5 = fp.readline()
+				if fp.close():
+					status, memd5 = commands.getstatusoutput("/usr/sbin/prelink '%s'" % (item))
+					fp = os.popen("/usr/sbin/prelink -y --md5 '%s'" % (item))
+					memd5 = fp.readline()
+
+					# if prelink failed again, then compare actual file's md5
+					if status or fp.close():
+
+						for fmd5,fsize in pkg_files_data[item]:
+							if isModified(item, fmd5, fsize):
+								archive_files.put(item)
+								break
+						else:
+							excluded_files.put(item)
+
+						continue
+					
+				memd5 = memd5.split(" ")[0]
+
+				prelinker.add_cache(item,gotmd5,memd5)
+
+			for fmd5,fsize in pkg_files_data[item]:
+				if fmd5 == memd5:
+					excluded_files.put(item)
+					break
+			else:
+				archive_files.put(item)
+
+			del memd5
+
+		else:
+			# a regular not prelinked file
+			#
+			for fmd5,fsize in pkg_files_data[item]:
+				if isModified(item, fmd5, fsize):
+					archive_files.put(item)
+					break
+			else:
+				excluded_files.put(item)
+
+def rpmqf_thread():
+	global walk_finished
+
+	while True: 
+		try:
+			item = rpmqf_files.get(True,5)
+		except Empty:
+			if queues_empty() and walk_finished:
+				slog.debug("walk is finished, thread exiting")
+				return
+			continue
+
+		STATS["files_total"]+=1
+		STATS["files_total_size"]+=get_file_size(item)
+
+		if not file_filter.match(item):
+			excluded_files.put(item)
+			continue
+
+		if file_filter.is_included(item) or not pkg_files_data.has_key(item):
+			archive_files.put(item)
+
+		elif pkg_files_data.has_key(item):
+			md5_files.put(item)
+
+		else:
+			excluded_files.put(item)
+
+#
+# Setup logging
+#
+
+slog = logging.getLogger('pypa')
+hdlr = logging.StreamHandler(sys.stdout)
+hdlr.setFormatter( logging.Formatter('%(levelname)s: %(message)s') )
+slog.addHandler(hdlr)
+
+slog.setLevel(logging.INFO)
+#slog.setLevel(logging.DEBUG)
+
+#
+# PARSE COMMAND LINE ARGUMENTS
+#
+
+def usage():
+	print "Usage: baubau [OPTION]"
+	print "Create a smart backup of the file-system."
+	print ""
+	print "  -d, --dir <path>        output directory"
+	print ""
+	print "  -z, --targz             create compressed tar archive"
+	print "  -r, --rpm               create rpm archive"
+	print ""
+	print "By default, no archive will be created (dry-run)."
+	print ""
+	print "  -l, --log               create log file"
+	print "  -5, --always-md5        always check md5 even for files with same size"
+	print ""
+
+OPTIONS={}
+OPTIONS["always_md5"]=False
+OPTIONS["log_file"]=False
+OPTIONS["text_out"]=False
+OPTIONS["tgz_out"]=False
+OPTIONS["rpm_out"]=False
+OPTIONS["include_file"]="/etc/baubau/include_files"
+OPTIONS["exclude_file"]="/etc/baubau/exclude_files"
+OPTIONS["backup_info_dir"]=False
+OPTIONS["root_dir"]="/"
+
+try:
+	opts, args = getopt.getopt(sys.argv[1:], "hzrd:5", ["help", "dir", "targz", "always-md5"])
+except getopt.GetoptError:
+	usage()
+	sys.exit(2)
+
+for opt, arg in opts:
+	if opt in ("-h", "--help"):
+		usage()
+		sys.exit()
+
+	elif opt in ("-d", "--dir"):
+		OPTIONS["backup_info_dir"] = arg
+
+	elif opt in ("-z", "--targz"):
+		OPTIONS["tgz_out"] = True
+
+        elif opt in ("-r", "--rpm"):
+                OPTIONS["rpm_out"] = True
+
+	elif opt in ("-5", "--always-md5"):
+		OPTIONS["always_md5"]=True
+
+if not OPTIONS["backup_info_dir"]:
+	OPTIONS["backup_info_dir"]="/root/baubau-%s" % time.strftime("%Y%m%d-%H%M%S")
+	slog.info("no output directory specified, using %s" % OPTIONS["backup_info_dir"] )
+
+try:	os.stat(OPTIONS["backup_info_dir"])
+except: _mkdir(OPTIONS["backup_info_dir"])
+
+OPTIONS["log_file"] = OPTIONS["backup_info_dir"] + "/baubau.log"
+
+hdlr = logging.FileHandler(OPTIONS["log_file"])
+hdlr.setFormatter( logging.Formatter('%(asctime)s %(levelname)s: %(message)s') )
+slog.addHandler(hdlr)
+
+#
+# Prepare
+#
+
+slog.debug("starting")
+
+fs_to_backup = [ OPTIONS["root_dir"] ]
+
+slog.debug("checking what file-systems to consider")
+try:
+	fp=open("%s/etc/fstab" % OPTIONS["root_dir"],"r")
+except:
+	slog.error("no /etc/fstab found. is this a root file-system ?")
+	sys.exit(1)
+else:
+	for line in fp.readlines():
+		fs=line.split()
+		try:
+		   if fs[2] == "ext3" and not "noauto" in fs[3].split(","):
+			if not fs[1] in fs_to_backup:	# should only add file-systems which are mounted inside an fs which is already in fs_to_backup
+				fs_to_backup.append(fs[1])
+				slog.debug(" - considering %s" % fs[1])
+		except IndexError:
+		   pass
+	fp.close()
+
+#
+# Here we build a list of files which are going to be forcefully included
+# or excluded from the backup.
+#
+
+slog.debug("building include and exclude filters")
+
+prelinker=prelink_class()
+
+file_filter=file_filter_class()
+
+#file_filter.add_exclude('^/$|.*\.(rpmnew|rpmsave|rpmorig)$')
+#file_filter.add_exclude('^/lib/kbd/keymaps|^/etc/X11/xkb/symbols|^/lib/modules/.*/(modules|source|build)|^/(sys|proc|dev|tmp|boot)|^/usr/src|^/etc/sgml/.*\.cat$|^/etc/gconf/gconf.xml.defaults/.*|^/etc/{rc.d,alternatives}|^/usr/share/(locale|doc|mime)|.*/(fonts|encodings)\.(scale|dir)$|^/var/lib/mldonkey/.*temp|^/usr/lib/(firefox|mozilla)-.*/(extensions|chrome)|^/var/(gdm|lock|run|lib/rpm|tmp|log|cache|named/chroot|lib/scrollkeeper|icons|man|spool)/.*|.*/(mimeinfo\.cache|icon-theme\.cache|\.beagle|\.Trash|\.checksysreport|\.xmame|\.thumbnails)$|.*\.metacity/sessions.*|.*/redhat/(BUILD|SOURCES)/.*|.*\.(temp|tmp|pid|lock|pyc)$')
+#file_filter.add_include('.*\.patch$|.*\.diff$')
+
+# if an actual archive is going to be created, we make sure that backup_info_dir is included
+if OPTIONS["tgz_out"]:
+	file_filter.add_include(OPTIONS["backup_info_dir"])
+	file_filter.add_exclude(OPTIONS["tgz_out"])
+
+file_filter.add_exclude('^/(dev|tmp)|^/home/.*/(mimeinfo\.cache|icon-theme\.cache|\.beagle|\.Trash|\.thumbnails)|^/var/cache/(beagle|yum)/')
+
+try:
+	file_filter.add_include_from_file(OPTIONS["include_file"])
+except IOError:
+	pass
+try:
+	file_filter.add_exclude_from_file(OPTIONS["exclude_file"])
+except IOError:
+	pass
+
+file_filter.compile()
+
+try:
+	_mkdir(OPTIONS["backup_info_dir"])
+except OSError:
+	slog.error("cannot create directory: %s" % OPTIONS["backup_info_dir"])
+	sys.exit(1)
+
+if OPTIONS["tgz_out"]: OPTIONS["tgz_out"] = OPTIONS["backup_info_dir"] + "/baubau.tar.gz"
+if OPTIONS["rpm_out"]:
+	_mkdir(OPTIONS["backup_info_dir"] + "/rpmbuild_tmp/BUILD/baubau-root/var/baubau")
+        _mkdir(OPTIONS["backup_info_dir"] + "/rpmbuild_tmp/SPECS")
+        _mkdir(OPTIONS["backup_info_dir"] + "/rpmbuild_tmp/RPMS")
+	OPTIONS["rpm_out"] = OPTIONS["backup_info_dir"] + "/rpmbuild_tmp/BUILD/baubau-root/var/baubau/baubau.tar"
+
+fp=open("%s/excluded_files_regexp" % OPTIONS["backup_info_dir"], "w")
+fp.write(file_filter.exclude_re)
+fp.close()
+fp=open("%s/included_files_regexp" % OPTIONS["backup_info_dir"], "w")
+fp.write(file_filter.include_re)
+fp.close()
+
+#
+# For optimization, we fetch all rpm data at once and store it in memory.
+#
+
+slog.debug("caching rpm data")
+pkg_files_data = {}
+mi = ts.dbMatch()
+fp=open( "%s/rpm-qa" % OPTIONS["backup_info_dir"], "w" )
+for h in mi:
+	fp.write( "%s-%s-%s\n" % (h['name'], h['version'], h['release']) )
+	for nome, fmd5, fsize in zip( h['FILENAMES'], h['filemd5s'], h['filesizes'] ):
+#		pkg_files_data[nome]={ "md5":fmd5, "size":fsize }
+		if pkg_files_data.has_key(nome):
+			pkg_files_data[nome].append( (fmd5,fsize) )
+		else:
+			pkg_files_data[nome] = [ (fmd5, fsize) ]
+fp.close()
+
+#
+# Creating queues and threads
+#
+
+rpmqf_files = Queue()
+md5_files = Queue()
+archive_files = Queue()
+excluded_files = Queue()
+
+walk_finished=False
+
+STATS = { "archived_files_counter":0, "archived_size_total":0, "files_total":0, "files_total_size":0, "excluded_files_counter":0, "size_by_ext":{}, "size_by_fname":[], "lftp_url":"" }
+
+threads = []
+
+slog.debug("creating threads")
+
+for i in xrange(5):
+	md5check_t = Thread(target=md5check_thread)
+	md5check_t.start()
+	threads.append(md5check_t)
+
+rpmqf_t = Thread(target=rpmqf_thread)
+rpmqf_t.start()
+threads.append(rpmqf_t)
+
+archive_t = Thread(target=archive_thread)
+archive_t.start()
+threads.append(archive_t)
+
+excluded_t = Thread(target=excluded_thread)
+excluded_t.start()
+threads.append(excluded_t)
+
+stats_t = Thread(target=stats_thread)
+stats_t.start()
+threads.append(stats_t)
+
+def walk_fs_dir( path ):
+	"Parse a directory and it's files recursively"
+
+#	CHECKME
+#        if os.path.islink(path):
+#		excluded_files.put(item)
+#		slog.debug("skipping path (symlink) %s" % path)
+#               return
+
+	if path != "/" and not file_filter.match(path):
+		slog.debug("skipping path (excluded) %s" % path)
+		excluded_files.put(path)
+		return
+
+	try:
+	   for item in os.listdir(path):
+		if path != "/":
+			newPath = path + '/' + item
+		else:
+			newPath = "/" + item
+
+		if os.path.isdir(newPath) and not os.path.islink(newPath) and not os.path.ismount(newPath):
+			walk_fs_dir(newPath)
+		elif os.path.islink(newPath) or os.path.isfile(newPath):
+			rpmqf_files.put(newPath)
+
+	except OSError:
+		pass
+
+slog.debug("walking the fs")
+
+try:
+	for dir in fs_to_backup:
+		walk_fs_dir(dir)
+except KeyboardInterrupt:
+	walk_finished = -1
+else:
+	walk_finished = True
+
+slog.debug("waiting for threads to finish...")
+
+for inc in threads:
+	inc.join()
+
+slog.info("finished.")
+
+slog.info("extensions by size for included files:")
+inc=0
+for ext in dict_sort_by_value_r(STATS["size_by_ext"]):
+	slog.info(" * %s: %d Mb" % (ext, STATS["size_by_ext"][ext] / 1024 / 1024))
+	if inc>5: break
+	inc+=1
+del(STATS["size_by_ext"])
+
+slog.info("largest files included:")
+STATS["size_by_fname"].reverse()
+for fname, size in STATS["size_by_fname"]:
+	slog.info(" * %s: %d Mb" % (fname, size / 1024 / 1024)) 
+del(STATS["size_by_fname"])
+
+sys.exit(0)
