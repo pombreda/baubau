@@ -23,6 +23,15 @@ def _mkdir(newdir):
         if tail:
             os.mkdir(newdir)
 
+def usage():
+        print "Usage: files2rpm [OPTION]"
+        print "Build an RPM from a list of files."
+        print "Additionally, specify a file containing the output of \"rpm -qa\" to add the dependencies to those packages."
+        print ""
+        print "  -i, --files             list of files to be archive"
+        print "  -p, --packages          list of packages to add a dependency for"
+        print ""
+
 try:
 	opts, args = getopt.getopt(sys.argv[1:], "hi:p:", ["help", "files", "packages"])
 except getopt.GetoptError:
@@ -35,12 +44,15 @@ for opt, arg in opts:
 		sys.exit()
 
 	elif opt in ("-i", "--files"):
-		OPT["files_fp"] = open(arg,"r")
+		if arg == "-":	OPT["files_fp"] = sys.stdin
+		else:		OPT["files_fp"] = open(arg,"r")
 
 	elif opt in ("-p", "--packages"):
 		OPT["pkg_path"] = arg
 
-if not OPT["files_fp"]:  OPT["files_fp"] = sys.stdin
+if not OPT["files_fp"]:
+	usage()
+	sys.exit()
 
 _mkdir(OPT["rpmbuild_path"] + "/SPECS")
 _mkdir(OPT["rpmbuild_path"] + "/BUILD")
@@ -68,6 +80,7 @@ if OPT["pkg_path"]:
 	for line in pkgfp:
 		line = line.strip().rsplit('-', 2)
 		fp.write("Requires: %s = %s-%s\n" % (line[0], line[1], line[2]) )
+#		fp.write("Requires: %s = %s\n" % (line[0], line[1]) )
 	pkgfp.close()
 
 fp.write("""URL: http://www.navid.it
