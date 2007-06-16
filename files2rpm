@@ -58,7 +58,7 @@ for opt, arg in opts:
 		else:		OPT["files_fp"] = open(arg,"r")
 
 	elif opt in ("-p", "--packages"):
-		if arg == auto:
+		if arg == "auto":
 			os.system("rpm -qa > /tmp/rpmqa")
 			arg = "/tmp/rpmqa"
 		OPT["pkg_path"] = arg
