@@ -34,6 +34,8 @@ import socket
 from string import lower
 from tempfile import mktemp
 import pickle
+from pykickstart.data import *
+from pykickstart.parser import *
 
 ts = rpm.TransactionSet()
 
@@ -82,6 +84,20 @@ class file_filter_class:
 	def compile(self):
 		self.exclude_ro = re.compile(self.exclude_re)
 		self.include_ro = re.compile(self.include_re)
+
+class kickstart:
+
+	class CustomHandlers(KickstartHandlers):
+		def doBootloader (self, args):
+			KickstartHandlers.doBootloader(self, args)
+
+	def __init__(self):
+		self.ksdata = KickstartData()
+		self.kshandlers = CustomHandlers(ksdata)
+        	self.ksparser = KickstartParser(ksdata, kshandlers)
+
+	def parse(self,ksname):
+		self.ksparser.readKickstart(ksname)
 
 class prelink_class:
 
@@ -258,7 +274,7 @@ def archive_thread():
 		try:
 			if tar:
 				tar.add(item)
-			txt.write(item + '\n')
+			txt.write(item.encode("string_escape") + '\n')
 		except:
 			slog.error("error reading %s" % item)
 			excluded_files.put(item)
@@ -615,7 +631,7 @@ def printDir( path ):
 			newPath = "/" + item
 
 		if os.path.isdir(newPath) and not os.path.islink(newPath) and not os.path.ismount(newPath):
-				printDir(newPath)
+			printDir(newPath)
 		elif os.path.islink(newPath) or os.path.isfile(newPath):
 			rpmqf_files.put(newPath)
 
