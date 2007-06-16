@@ -1,0 +1,113 @@
+#!/usr/bin/env python
+
+import sys, os, getopt
+
+OPT = { "fstree_path" : "/var/baubau", "rpmbuild_path":"/var/tmp/files2rpm_rpmbuild", "files_fp":None, "pkg_path":None }
+
+def _mkdir(newdir):
+    """works the way a good mkdir should :)
+        - already exists, silently complete
+        - regular file in the way, raise an exception
+        - parent directory(ies) does not exist, make them as well
+    """
+    if os.path.isdir(newdir):
+        pass
+    elif os.path.isfile(newdir):
+        raise OSError("a file with the same name as the desired " \
+                      "dir, '%s', already exists." % newdir)
+    else:
+        head, tail = os.path.split(newdir)
+        if head and not os.path.isdir(head):
+            _mkdir(head)
+        #print "_mkdir %s" % repr(newdir)
+        if tail:
+            os.mkdir(newdir)
+
+try:
+	opts, args = getopt.getopt(sys.argv[1:], "hi:p:", ["help", "files", "packages"])
+except getopt.GetoptError:
+	usage()
+	sys.exit(2)
+
+for opt, arg in opts:
+	if opt in ("-h", "--help"):
+		usage()
+		sys.exit()
+
+	elif opt in ("-i", "--files"):
+		OPT["files_fp"] = open(arg,"r")
+
+	elif opt in ("-p", "--packages"):
+		OPT["pkg_path"] = arg
+
+if not OPT["files_fp"]:  OPT["files_fp"] = sys.stdin
+
+_mkdir(OPT["rpmbuild_path"] + "/SPECS")
+_mkdir(OPT["rpmbuild_path"] + "/BUILD")
+_mkdir(OPT["rpmbuild_path"] + "/RPMS")
+
+OPT["rpmbuild_spec_path"] = OPT["rpmbuild_path"] + "/SPECS/fstree-0493.spec"
+
+fp=open(OPT["rpmbuild_spec_path"],"w")
+
+fp.write("""%define _unpackaged_files_terminate_build 0
+%define _topdir """ + OPT["rpmbuild_path"] + """
+
+Summary: A multithreaded backup utility to include modified files from packages (using RPMdb) and new files.
+Name: fstree
+Version: 1.0
+Release: 1
+License: GPL
+Group: Development/Debuggers
+BuildArch: noarch
+BuildRoot: %{_builddir}/%{name}-root
+""")
+
+if OPT["pkg_path"]:
+	pkgfp = open(OPT["pkg_path"],"r")
+	for line in pkgfp:
+		line = line.strip().rsplit('-', 2)
+		fp.write("Requires: %s = %s-%s\n" % (line[0], line[1], line[2]) )
+	pkgfp.close()
+
+fp.write("""URL: http://www.navid.it
+Packager: navid@navid.it
+%description
+baubau is a multithreaded backup utility which walks the file-system
+searching for files belonging to packages which have been modified
+(using RPMdb) and for new files (which don't belong to any package).
+
+This way it is possible to only archive files which otherwise would
+be unrecoverrable.
+%prep
+rm -rf $RPM_BUILD_ROOT
+mkdir -p $RPM_BUILD_ROOT""" + OPT["fstree_path"] + """
+
+%build
+
+%install
+ln -s / $RPM_BUILD_ROOT""" + OPT["fstree_path"] + "/fstree" + """
+
+%clean
+rm -rf $RPM_BUILD_ROOT
+
+%files
+""")
+
+for line in OPT["files_fp"]:
+	line=line.strip()
+	try:	os.stat(line)
+	except: print "file missing!", line
+	else:	fp.write(OPT["fstree_path"] + "/fstree/" + line + "\n")
+
+fp.write("""%doc
+#/var/baubau/fstree/README
+
+%changelog
+* Tue Mar  13 2007  Navid Sheikhol-Eslami <navid@navid.it>
+- Initial release
+""")
+
+fp.close()
+
+os.system('sudo rpmbuild -bb "%s"' % OPT["rpmbuild_spec_path"])
