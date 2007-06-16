@@ -129,9 +129,12 @@ rm -rf $RPM_BUILD_ROOT
 
 for line in OPT["files_fp"]:
 	line=line.strip()
-	try:	os.stat(line)
-	except: print "file missing!", line
-	else:	fp.write(OPT["fstree_path"] + "/fstree/" + line + "\n")
+	try:
+		if not os.path.islink(line): os.stat(line)
+	except:
+		print "file missing!", line
+	else:
+		fp.write(OPT["fstree_path"] + "/fstree/" + line + "\n")
 
 fp.write("""%doc
 #/var/baubau/fstree/README
