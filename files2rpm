@@ -4,7 +4,7 @@ import sys, os, getopt
 from shutil import move
 
 OPT = { "fstree_path" : "/var/baubau", "rpmbuild_path":"/var/tmp/files2rpm_rpmbuild", "files_fp":None, "pkg_path":None,
-	"rpm_name":"fstree", "rpm_ver":"1.0", "rpm_rel":"0", "rpm_path":".", "arch":None }
+	"rpm_name":"fstree", "rpm_ver":"1.0", "rpm_rel":"0", "rpm_path":".", "arch":"noarch" }
 
 def _mkdir(newdir):
     """works the way a good mkdir should :)
@@ -31,8 +31,10 @@ def usage():
         print "Optionally, add a dependency to packages from list (formatted as \"rpm -qa\"."
         print ""
         print "  -i, --files <file>      file containing list of files to be archive"
-        print "  -p, --packages <file>   file containing list of packages to add a dependency for"
+        print "  -p, --packages [<file>] add a dependency for packages from file"
+	print "                          if <file> is \"auto\", use output of \"rpm -qa\""
         print "  -a, --arch <arch>       specify an architecture (default is noarch)"
+	print "  -o, --out <file>        output file"
 	return
         print ""
         print "  -preserve original attributes (default)"
@@ -41,7 +43,7 @@ def usage():
 
 
 try:
-	opts, args = getopt.getopt(sys.argv[1:], "hi:p:a:", ["help", "files", "packages"])
+	opts, args = getopt.getopt(sys.argv[1:], "hi:p:a:o:", ["help", "files", "packages"])
 except getopt.GetoptError:
 	usage()
 	sys.exit(2)
@@ -56,10 +58,17 @@ for opt, arg in opts:
 		else:		OPT["files_fp"] = open(arg,"r")
 
 	elif opt in ("-p", "--packages"):
+		if arg == auto:
+			os.system("rpm -qa > /tmp/rpmqa")
+			arg = "/tmp/rpmqa"
 		OPT["pkg_path"] = arg
 
 	elif opt in ("-a", "--arch"):
 		OPT["arch"] = arg
+
+	elif opt in ("-o", "--outdir"):
+		OPT["rpm_path"] = arg
+		OPT["rpmbuild_path"]=arg + "/rpmbuild_tmp"
 
 if not OPT["files_fp"]:
 	usage()
@@ -82,13 +91,7 @@ Version: """ + OPT["rpm_ver"] + """
 Release: """ + OPT["rpm_rel"] + """
 License: GPL
 Group: Development/Debuggers
-BuildArch: """)
-
-if not OPT["arch"]:	fp.write("noarch")
-else:			fp.write(OPT["arch"])
-
-
-fp.write("""
+BuildArch: """ + OPT["arch"] + """
 BuildRoot: %{_builddir}/%{name}-root
 """)
 
