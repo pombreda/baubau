@@ -134,7 +134,8 @@ for line in OPT["files_fp"]:
 	except:
 		print "file missing!", line
 	else:
-		fp.write(OPT["fstree_path"] + "/fstree/" + line.replace(" ","\ ") + "\n")
+		if not line.isalpha(): line='"' + line + '"'
+		fp.write(OPT["fstree_path"] + "/fstree/" + line + "\n")
 
 fp.write("""%doc
 #/var/baubau/fstree/README
