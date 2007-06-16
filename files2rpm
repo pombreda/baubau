@@ -1,8 +1,10 @@
 #!/usr/bin/env python
 
 import sys, os, getopt
+from shutil import move
 
-OPT = { "fstree_path" : "/var/baubau", "rpmbuild_path":"/var/tmp/files2rpm_rpmbuild", "files_fp":None, "pkg_path":None }
+OPT = { "fstree_path" : "/var/baubau", "rpmbuild_path":"/var/tmp/files2rpm_rpmbuild", "files_fp":None, "pkg_path":None,
+	"rpm_name":"fstree", "rpm_ver":"1.0", "rpm_rel":"0", "rpm_path":".", "arch":None }
 
 def _mkdir(newdir):
     """works the way a good mkdir should :)
@@ -30,10 +32,11 @@ def usage():
         print ""
         print "  -i, --files             list of files to be archive"
         print "  -p, --packages          list of packages to add a dependency for"
+        print "  -a, --arch              specify an architecture (default is noarch)"
         print ""
 
 try:
-	opts, args = getopt.getopt(sys.argv[1:], "hi:p:", ["help", "files", "packages"])
+	opts, args = getopt.getopt(sys.argv[1:], "hi:p:a:", ["help", "files", "packages"])
 except getopt.GetoptError:
 	usage()
 	sys.exit(2)
@@ -50,6 +53,9 @@ for opt, arg in opts:
 	elif opt in ("-p", "--packages"):
 		OPT["pkg_path"] = arg
 
+	elif opt in ("-a", "--arch"):
+		OPT["arch"] = arg
+
 if not OPT["files_fp"]:
 	usage()
 	sys.exit()
@@ -58,7 +64,7 @@ _mkdir(OPT["rpmbuild_path"] + "/SPECS")
 _mkdir(OPT["rpmbuild_path"] + "/BUILD")
 _mkdir(OPT["rpmbuild_path"] + "/RPMS")
 
-OPT["rpmbuild_spec_path"] = OPT["rpmbuild_path"] + "/SPECS/fstree-0493.spec"
+OPT["rpmbuild_spec_path"] = "%s/SPECS/%s.spec" % ( OPT["rpmbuild_path"], OPT["rpm_name"] )
 
 fp=open(OPT["rpmbuild_spec_path"],"w")
 
@@ -66,12 +72,18 @@ fp.write("""%define _unpackaged_files_terminate_build 0
 %define _topdir """ + OPT["rpmbuild_path"] + """
 
 Summary: A multithreaded backup utility to include modified files from packages (using RPMdb) and new files.
-Name: fstree
-Version: 1.0
-Release: 1
+Name: """ + OPT["rpm_name"] + """
+Version: """ + OPT["rpm_ver"] + """
+Release: """ + OPT["rpm_rel"] + """
 License: GPL
 Group: Development/Debuggers
-BuildArch: noarch
+BuildArch: """)
+
+if not OPT["arch"]:	fp.write("noarch")
+else:			fp.write(OPT["arch"])
+
+
+fp.write("""
 BuildRoot: %{_builddir}/%{name}-root
 """)
 
@@ -124,3 +136,5 @@ fp.write("""%doc
 fp.close()
 
 os.system('sudo rpmbuild -bb "%s"' % OPT["rpmbuild_spec_path"])
+
+move("%s/RPMS/%s/%s-%s-%s.%s.rpm" % (OPT["rpmbuild_path"], OPT["arch"], OPT["rpm_name"], OPT["rpm_ver"], OPT["rpm_rel"], OPT["arch"]), OPT["rpm_path"])
