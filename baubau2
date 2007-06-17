@@ -33,9 +33,10 @@ import getopt
 import socket
 from string import lower
 from tempfile import mktemp
-import pickle
 from pykickstart.data import *
 from pykickstart.parser import *
+import shelve
+import shutil
 
 ts = rpm.TransactionSet()
 
@@ -104,10 +105,9 @@ class prelink_class:
 	def __init__(self):
 		self.include_re=""
 		self.exclude_re=""
-		self.cache={}
+#		self.cache={}
 
-		try:	self.restore()
-		except: pass
+		self.open()
 
 		fp=open("/etc/prelink.conf","r")
 		for line in fp.readlines():
@@ -141,17 +141,17 @@ class prelink_class:
 		self.cache[fname]=(fmd5,realmd5)
 
 	def get_cache(self,fname):
+		if not self.cache.has_key(fname):	print "CACHE MISS ", fname
 		return self.cache[fname]
 
-	def restore(self):
-		pkl_file = open('/etc/baubau/prelink_md5.cache', 'rb')
-		self.cache = pickle.load(pkl_file)
-		pkl_file.close()
+	def open(self):
+		self.cache = shelve.open('/etc/baubau/prelink_md5.db4')
 
 	def store(self):
-		output = open('/etc/baubau/prelink_md5.cache', 'wb')
-		pickle.dump(self.cache, output)
-		output.close()
+		self.cache.sync()
+
+	def close(self):
+		self.cache.close()
 
 def get_file_size(fname):
 	try:
@@ -328,13 +328,15 @@ def md5check_thread():
 	global walk_finished
 	my_id = random.randint(1, 100)
 
+	prelinker = prelink_class()
+
 	while True:
 		try:
 			item = md5_files.get(True,1) 
 		except Empty:
 			if queues_empty() and walk_finished:
 				slog.debug("walk is finished, thread exiting")
-				prelinker.store()
+				prelinker.close()
 				return
 			continue
 
@@ -475,6 +477,7 @@ OPTIONS["include_file"]="/etc/baubau/include_files"
 OPTIONS["exclude_file"]="/etc/baubau/exclude_files"
 OPTIONS["backup_info_dir"]=False
 OPTIONS["root_dir"]="/"
+RPMOPT={}
 
 try:
 	opts, args = getopt.getopt(sys.argv[1:], "hzrd:5", ["help", "dir", "targz", "always-md5"])
@@ -545,20 +548,13 @@ else:
 
 slog.debug("building include and exclude filters")
 
-prelinker=prelink_class()
-
 file_filter=file_filter_class()
 
 #file_filter.add_exclude('^/$|.*\.(rpmnew|rpmsave|rpmorig)$')
 #file_filter.add_exclude('^/lib/kbd/keymaps|^/etc/X11/xkb/symbols|^/lib/modules/.*/(modules|source|build)|^/(sys|proc|dev|tmp|boot)|^/usr/src|^/etc/sgml/.*\.cat$|^/etc/gconf/gconf.xml.defaults/.*|^/etc/{rc.d,alternatives}|^/usr/share/(locale|doc|mime)|.*/(fonts|encodings)\.(scale|dir)$|^/var/lib/mldonkey/.*temp|^/usr/lib/(firefox|mozilla)-.*/(extensions|chrome)|^/var/(gdm|lock|run|lib/rpm|tmp|log|cache|named/chroot|lib/scrollkeeper|icons|man|spool)/.*|.*/(mimeinfo\.cache|icon-theme\.cache|\.beagle|\.Trash|\.checksysreport|\.xmame|\.thumbnails)$|.*\.metacity/sessions.*|.*/redhat/(BUILD|SOURCES)/.*|.*\.(temp|tmp|pid|lock|pyc)$')
 #file_filter.add_include('.*\.patch$|.*\.diff$')
 
-# if an actual archive is going to be created, we make sure that backup_info_dir is included
-if OPTIONS["tgz_out"]:
-	file_filter.add_include(OPTIONS["backup_info_dir"])
-	file_filter.add_exclude(OPTIONS["tgz_out"])
-
-file_filter.add_exclude('^/(dev|tmp)|^/home/.*/(mimeinfo\.cache|icon-theme\.cache|\.beagle|\.Trash|\.thumbnails)|^/var/cache/(beagle|yum)/')
+file_filter.add_exclude('^/(dev|tmp)|^/home/.*/(mimeinfo\.cache|icon-theme\.cache|\.beagle|\.Trash|\.thumbnails)|^/var/cache/(beagle|yum)/|/etc/baubau/prelink_md5\.db4')
 
 try:
 	file_filter.add_include_from_file(OPTIONS["include_file"])
@@ -577,12 +573,20 @@ except OSError:
 	slog.error("cannot create directory: %s" % OPTIONS["backup_info_dir"])
 	sys.exit(1)
 
-if OPTIONS["tgz_out"]: OPTIONS["tgz_out"] = OPTIONS["backup_info_dir"] + "/baubau.tar.gz"
+file_filter.add_exclude(OPTIONS["backup_info_dir"])
+
+if OPTIONS["tgz_out"]:
+	OPTIONS["tgz_out"] = OPTIONS["backup_info_dir"] + "/baubau.tar.gz"
+	file_filter.add_exclude(OPTIONS["tgz_out"])
+
 if OPTIONS["rpm_out"]:
-	_mkdir(OPTIONS["backup_info_dir"] + "/rpmbuild_tmp/BUILD/baubau-root/var/baubau")
-        _mkdir(OPTIONS["backup_info_dir"] + "/rpmbuild_tmp/SPECS")
-        _mkdir(OPTIONS["backup_info_dir"] + "/rpmbuild_tmp/RPMS")
-	OPTIONS["rpm_out"] = OPTIONS["backup_info_dir"] + "/rpmbuild_tmp/BUILD/baubau-root/var/baubau/baubau.tar"
+	RPMOPT["rpmbuild_path"] = os.path.abspath(OPTIONS["backup_info_dir"] + "/rpmbuild_tmp")
+	_mkdir(RPMOPT["rpmbuild_path"] + "/BUILD/baubau-root/var/baubau")
+        _mkdir(RPMOPT["rpmbuild_path"] + "/SPECS")
+        _mkdir(RPMOPT["rpmbuild_path"] + "/RPMS")
+	OPTIONS["rpm_out_relative"] = "/var/baubau/baubau.tar"
+	OPTIONS["rpm_out"] = RPMOPT["rpmbuild_path"] + "/BUILD/baubau-root/" + OPTIONS["rpm_out_relative"]
+	file_filter.add_exclude(RPMOPT["rpmbuild_path"])
 
 fp=open("%s/excluded_files_regexp" % OPTIONS["backup_info_dir"], "w")
 fp.write(file_filter.exclude_re)
@@ -706,5 +710,80 @@ STATS["size_by_fname"].reverse()
 for fname, size in STATS["size_by_fname"]:
 	slog.info(" * %s: %d Mb" % (fname, size / 1024 / 1024)) 
 del(STATS["size_by_fname"])
+
+if OPTIONS["rpm_out"]:
+
+	RPMOPT["fstree_path"] = "/var/baubau"
+	RPMOPT["file_fp"] = open("%s/included_files" % OPTIONS["backup_info_dir"],"r")
+	RPMOPT["pkg_path"] = "%s/rpm-qa" % OPTIONS["backup_info_dir"]
+	RPMOPT["rpm_name"] = "fstree"
+	RPMOPT["rpm_ver"] = "1.0"
+	RPMOPT["rpm_rel"] = "1"
+	RPMOPT["arch"] = "noarch"
+	RPMOPT["rpmbuild_spec_path"] = "%s/SPECS/%s.spec" % ( RPMOPT["rpmbuild_path"], RPMOPT["rpm_name"] )
+
+	fp=open(RPMOPT["rpmbuild_spec_path"],"w")
+
+	fp.write("""%define _unpackaged_files_terminate_build 0
+%define _topdir """ + RPMOPT["rpmbuild_path"] + """
+#%define debug_package %{nil}
+%debug_package %{nil}
+%define __prelink_undo_cmd %{nil}
+%define __os_install_post %{nil}
+
+Summary: A multithreaded backup utility to include modified files from packages (using RPMdb) and new files.
+Name: """ + RPMOPT["rpm_name"] + """
+Version: """ + RPMOPT["rpm_ver"] + """
+Release: """ + RPMOPT["rpm_rel"] + """
+License: GPL
+Group: Development/Debuggers
+BuildArch: """ + RPMOPT["arch"] + """
+BuildRoot: %{_builddir}/baubau-root
+""")
+
+	if RPMOPT["pkg_path"]:
+		pkgfp = open(RPMOPT["pkg_path"],"r")
+		for line in pkgfp:
+			line = line.strip().rsplit('-', 2)
+			fp.write("Requires: %s = %s-%s\n" % (line[0], line[1], line[2]) )
+		pkgfp.close()
+
+	fp.write("""URL: http://www.navid.it
+Packager: navid@navid.it
+%description
+baubau is a multithreaded backup utility which walks the file-system
+searching for files belonging to packages which have been modified
+(using RPMdb) and for new files (which don't belong to any package).
+
+This way it is possible to only archive files which otherwise would
+be unrecoverrable.
+%prep
+if [ ! -d $RPM_BUILD_ROOT""" + RPMOPT["fstree_path"] + """ ]; then
+    mkdir -p $RPM_BUILD_ROOT""" + RPMOPT["fstree_path"] + """
+fi
+
+%build
+
+%install
+
+%clean
+rm -rf $RPM_BUILD_ROOT
+
+%files
+""" + OPTIONS["rpm_out_relative"] + """
+
+%doc
+#/var/baubau/fstree/README
+
+%changelog
+* Tue Mar  13 2007  Navid Sheikhol-Eslami <navid@navid.it>
+- Initial release
+""")
+
+	fp.close()
+
+	os.system('rpmbuild -bb "%s"' % RPMOPT["rpmbuild_spec_path"])
+
+	shutil.move("%s/RPMS/%s/%s-%s-%s.%s.rpm" % (RPMOPT["rpmbuild_path"], RPMOPT["arch"], RPMOPT["rpm_name"], RPMOPT["rpm_ver"], RPMOPT["rpm_rel"], RPMOPT["arch"]), OPTIONS["backup_info_dir"])
 
 sys.exit(0)
