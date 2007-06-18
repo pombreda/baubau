@@ -105,7 +105,6 @@ class prelink_class:
 	def __init__(self):
 		self.include_re=""
 		self.exclude_re=""
-#		self.cache={}
 
 		self.open()
 
@@ -141,7 +140,6 @@ class prelink_class:
 		self.cache[fname]=(fmd5,realmd5)
 
 	def get_cache(self,fname):
-		if not self.cache.has_key(fname):	print "CACHE MISS ", fname
 		return self.cache[fname]
 
 	def open(self):
@@ -272,11 +270,6 @@ def archive_thread():
 			os.unlink(OPTIONS["tgz_out"])
 		tar = tarfile.open(OPTIONS["tgz_out"], "w:gz")
 		tar.dereference = False
-	elif OPTIONS["rpm_out"]:
-                if os.path.isfile(OPTIONS["rpm_out"]):
-                        os.unlink(OPTIONS["rpm_out"])
-                tar = tarfile.open(OPTIONS["rpm_out"], "w")
-                tar.dereference = False
 	else:
 		tar = False
 
@@ -491,7 +484,7 @@ for opt, arg in opts:
 		sys.exit()
 
 	elif opt in ("-d", "--dir"):
-		OPTIONS["backup_info_dir"] = arg
+		OPTIONS["backup_info_dir"] = os.path.abspath(arg)
 
 	elif opt in ("-z", "--targz"):
 		OPTIONS["tgz_out"] = True
@@ -500,11 +493,19 @@ for opt, arg in opts:
                 OPTIONS["rpm_out"] = True
 
 	elif opt in ("-5", "--always-md5"):
-		OPTIONS["always_md5"]=True
+		OPTIONS["always_md5"] = True
 
 if not OPTIONS["backup_info_dir"]:
 	OPTIONS["backup_info_dir"]="/root/baubau-%s" % time.strftime("%Y%m%d-%H%M%S")
 	slog.info("no output directory specified, using %s" % OPTIONS["backup_info_dir"] )
+else:
+	try:	os.stat(OPTIONS["backup_info_dir"])
+	except: pass
+	else:
+		slog.error("could not create output directory in: " + OPTIONS["backup_info_dir"])
+		sys.exit(1)
+			
+        slog.info("output directory will be: %s" % OPTIONS["backup_info_dir"] )
 
 try:	os.stat(OPTIONS["backup_info_dir"])
 except: _mkdir(OPTIONS["backup_info_dir"])
@@ -565,8 +566,6 @@ try:
 except IOError:
 	pass
 
-file_filter.compile()
-
 try:
 	_mkdir(OPTIONS["backup_info_dir"])
 except OSError:
@@ -577,16 +576,13 @@ file_filter.add_exclude(OPTIONS["backup_info_dir"])
 
 if OPTIONS["tgz_out"]:
 	OPTIONS["tgz_out"] = OPTIONS["backup_info_dir"] + "/baubau.tar.gz"
-	file_filter.add_exclude(OPTIONS["tgz_out"])
 
 if OPTIONS["rpm_out"]:
 	RPMOPT["rpmbuild_path"] = os.path.abspath(OPTIONS["backup_info_dir"] + "/rpmbuild_tmp")
-	_mkdir(RPMOPT["rpmbuild_path"] + "/BUILD/baubau-root/var/baubau")
+	_mkdir(RPMOPT["rpmbuild_path"])
+	_mkdir(RPMOPT["rpmbuild_path"] + "/BUILD")
         _mkdir(RPMOPT["rpmbuild_path"] + "/SPECS")
         _mkdir(RPMOPT["rpmbuild_path"] + "/RPMS")
-	OPTIONS["rpm_out_relative"] = "/var/baubau/baubau.tar"
-	OPTIONS["rpm_out"] = RPMOPT["rpmbuild_path"] + "/BUILD/baubau-root/" + OPTIONS["rpm_out_relative"]
-	file_filter.add_exclude(RPMOPT["rpmbuild_path"])
 
 fp=open("%s/excluded_files_regexp" % OPTIONS["backup_info_dir"], "w")
 fp.write(file_filter.exclude_re)
@@ -595,6 +591,8 @@ fp=open("%s/included_files_regexp" % OPTIONS["backup_info_dir"], "w")
 fp.write(file_filter.include_re)
 fp.close()
 
+file_filter.compile()
+
 #
 # For optimization, we fetch all rpm data at once and store it in memory.
 #
@@ -602,16 +600,25 @@ fp.close()
 slog.debug("caching rpm data")
 pkg_files_data = {}
 mi = ts.dbMatch()
+
 fp=open( "%s/rpm-qa" % OPTIONS["backup_info_dir"], "w" )
+fpdel = open("%s/deleted_files" % OPTIONS["backup_info_dir"], "w")
+
 for h in mi:
 	fp.write( "%s-%s-%s\n" % (h['name'], h['version'], h['release']) )
 	for nome, fmd5, fsize in zip( h['FILENAMES'], h['filemd5s'], h['filesizes'] ):
-#		pkg_files_data[nome]={ "md5":fmd5, "size":fsize }
+		try:
+			os.stat(nome)
+		except OSError:
+			fpdel.write(nome + "\n")
+
 		if pkg_files_data.has_key(nome):
 			pkg_files_data[nome].append( (fmd5,fsize) )
 		else:
 			pkg_files_data[nome] = [ (fmd5, fsize) ]
 fp.close()
+fpdel.close()
+sys.exit()
 
 #
 # Creating queues and threads
@@ -724,8 +731,7 @@ if OPTIONS["rpm_out"]:
 
 	fp=open(RPMOPT["rpmbuild_spec_path"],"w")
 
-	fp.write("""%define _unpackaged_files_terminate_build 0
-%define _topdir """ + RPMOPT["rpmbuild_path"] + """
+	fp.write("""%define _topdir """ + RPMOPT["rpmbuild_path"] + """
 #%define debug_package %{nil}
 %debug_package %{nil}
 %define __prelink_undo_cmd %{nil}
@@ -745,6 +751,7 @@ BuildRoot: %{_builddir}/baubau-root
 		pkgfp = open(RPMOPT["pkg_path"],"r")
 		for line in pkgfp:
 			line = line.strip().rsplit('-', 2)
+			if line[0] == "gpg-pubkey": continue
 			fp.write("Requires: %s = %s-%s\n" % (line[0], line[1], line[2]) )
 		pkgfp.close()
 
@@ -758,8 +765,8 @@ searching for files belonging to packages which have been modified
 This way it is possible to only archive files which otherwise would
 be unrecoverrable.
 %prep
-if [ ! -d $RPM_BUILD_ROOT""" + RPMOPT["fstree_path"] + """ ]; then
-    mkdir -p $RPM_BUILD_ROOT""" + RPMOPT["fstree_path"] + """
+if [ ! -d $RPM_BUILD_ROOT ]; then
+    mkdir -p $RPM_BUILD_ROOT
 fi
 
 %build
@@ -770,7 +777,6 @@ fi
 rm -rf $RPM_BUILD_ROOT
 
 %files
-""" + OPTIONS["rpm_out_relative"] + """
 
 %doc
 #/var/baubau/fstree/README
@@ -785,5 +791,8 @@ rm -rf $RPM_BUILD_ROOT
 	os.system('rpmbuild -bb "%s"' % RPMOPT["rpmbuild_spec_path"])
 
 	shutil.move("%s/RPMS/%s/%s-%s-%s.%s.rpm" % (RPMOPT["rpmbuild_path"], RPMOPT["arch"], RPMOPT["rpm_name"], RPMOPT["rpm_ver"], RPMOPT["rpm_rel"], RPMOPT["arch"]), OPTIONS["backup_info_dir"])
+
+	if os.path.abspath(RPMOPT["rpmbuild_path"]) != "/" and len(RPMOPT["rpmbuild_path"]) > 0:
+		os.system("rm -rf " + RPMOPT["rpmbuild_path"])
 
 sys.exit(0)
