@@ -523,24 +523,26 @@ slog.addHandler(hdlr)
 slog.debug("starting")
 
 fs_to_backup = [ OPTIONS["root_dir"] ]
+fs_to_backup = []
 
-slog.debug("checking what file-systems to consider")
-try:
-	fp=open("%s/etc/fstab" % OPTIONS["root_dir"],"r")
-except:
-	slog.error("no /etc/fstab found. is this a root file-system ?")
-	sys.exit(1)
-else:
-	for line in fp.readlines():
-		fs=line.split()
-		try:
-		   if fs[2] == "ext3" and not "noauto" in fs[3].split(","):
-			if not fs[1] in fs_to_backup:	# should only add file-systems which are mounted inside an fs which is already in fs_to_backup
-				fs_to_backup.append(fs[1])
-				slog.debug(" - considering %s" % fs[1])
-		except IndexError:
-		   pass
-	fp.close()
+if len(fs_to_backup) > 0:
+	slog.debug("checking what file-systems to consider")
+	try:
+		fp=open("%s/etc/fstab" % OPTIONS["root_dir"],"r")
+	except:
+		slog.error("no /etc/fstab found. is this a root file-system ?")
+		sys.exit(1)
+	else:
+		for line in fp.readlines():
+			fs=line.split()
+			try:
+			   if fs[2] == "ext3" and not "noauto" in fs[3].split(","):
+				if not fs[1] in fs_to_backup:	# should only add file-systems which are mounted inside an fs which is already in fs_to_backup
+					fs_to_backup.append(fs[1])
+					slog.debug(" - considering %s" % fs[1])
+			except IndexError:
+			   pass
+		fp.close()
 
 #
 # Here we build a list of files which are going to be forcefully included
@@ -687,14 +689,22 @@ def walk_fs_dir( path ):
 	except OSError:
 		pass
 
-slog.debug("walking the fs")
+if len(fs_to_backup) > 0:
+	slog.debug("walking the fs\n\n\n\n\n")
 
-try:
-	for dir in fs_to_backup:
-		walk_fs_dir(dir)
-except KeyboardInterrupt:
-	walk_finished = -1
+	try:
+		for dir in fs_to_backup:
+			walk_fs_dir(dir)
+	except KeyboardInterrupt:
+		walk_finished = -1
+	else:
+		walk_finished = True
 else:
+	slog.debug("looking for modified files\n\n\n\n")
+
+	for pkgname in pkg_files_data:
+		rpmqf_files.put(pkgname)
+
 	walk_finished = True
 
 slog.debug("waiting for threads to finish...")
