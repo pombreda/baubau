@@ -25,6 +25,8 @@ from stat import *
 import rpm
 import md5
 import re
+import csv
+import pwd, grp
 import time
 import random
 import tarfile
@@ -34,8 +36,6 @@ import socket
 from string import lower
 from tempfile import mktemp
 import pickle
-from pykickstart.data import *
-from pykickstart.parser import *
 
 ts = rpm.TransactionSet()
 
@@ -84,20 +84,6 @@ class file_filter_class:
 	def compile(self):
 		self.exclude_ro = re.compile(self.exclude_re)
 		self.include_ro = re.compile(self.include_re)
-
-class kickstart:
-
-	class CustomHandlers(KickstartHandlers):
-		def doBootloader (self, args):
-			KickstartHandlers.doBootloader(self, args)
-
-	def __init__(self):
-		self.ksdata = KickstartData()
-		self.kshandlers = CustomHandlers(ksdata)
-        	self.ksparser = KickstartParser(ksdata, kshandlers)
-
-	def parse(self,ksname):
-		self.ksparser.readKickstart(ksname)
 
 class prelink_class:
 
@@ -257,6 +243,7 @@ def archive_thread():
 		tar = False
 
 	txt = open("%s/included_files" % OPTIONS["backup_info_dir"],'w')
+    writer = csv.writer(open("%s/included_files.csv" % OPTIONS["backup_info_dir"], "wb"))
 
 	while True: 
 		try:
@@ -275,6 +262,13 @@ def archive_thread():
 			if tar:
 				tar.add(item)
 			txt.write(item.encode("string_escape") + '\n')
+            ostats = os.stat(fname) #[ST_SIZE]
+			writer.writerow([
+			    item.encode("string_escape"),
+			    pwd.getpwuid(ostats[ST_UID])[0],
+			    grp.getgrgid(ostats[ST_GID])[0],
+			    oct(ostats[ST_MODE])[-4:]
+			])
 		except:
 			slog.error("error reading %s" % item)
 			excluded_files.put(item)
